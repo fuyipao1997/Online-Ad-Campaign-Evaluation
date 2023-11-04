@@ -1,0 +1,366 @@
+---
+title: "Online Ad Campaign Evaluation"
+format: html
+editor: visual
+---
+
+```{r setup, include=FALSE,echo=FALSE}
+#Please do not change this
+knitr::opts_chunk$set(echo = FALSE)
+options(scipen = 1, digits = 3, warning = FALSE,message=FALSE)
+
+#Load library
+library(data.table)
+library(ggplot2)
+library(tidyverse)
+library(pwr)
+library(lfe)
+library(modelsummary)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(ggstatsplot)
+library(fixest)
+library(ggpubr)                       
+library(scales)
+```
+
+```{r}
+#Load data
+df<- fread('PS1-MSBA-4000146.csv')
+df[0:5,]
+```
+
+## 1. Randomization check
+
+### a. Verify the randomization by "user country location"
+
+i\. Use the difference-in-means estimator to compare the proportions of UK and US consumers in Treatment versus Control groups.
+
+```{r}
+#Create UK/US variables and df
+df$IsUK <-ifelse(df$country =='UK',1,0)
+df$IsUS <-ifelse(df$country =='US',1,0)
+df_uk_treat <- df$IsUK[df$treatment == 1]
+df_uk_ctrl <- df$IsUK[df$treatment == 0]
+df_us_treat <- df$IsUS[df$treatment == 1]
+df_us_ctrl <- df$IsUS[df$treatment == 0]
+n_treat_uk <- length(df_uk_treat)
+n_ctrl_uk <- length(df_uk_ctrl)
+n_treat_us <- length(df_us_treat)
+n_ctrl_us <- length(df_us_ctrl)
+
+#Difference in means in isUK
+uk_diff_mean <-mean(df$IsUK[df$treatment==1])-mean(df$IsUK[df$treatment==0])
+sd_uk <- sqrt((var(df_uk_treat)/n_treat_uk) + (var(df_uk_ctrl)/n_ctrl_uk))
+
+#Difference in means in isUS
+us_diff_mean <-mean(df$IsUS[df$treatment==1])-mean(df$IsUS[df$treatment==0])
+sd_us <- sqrt((var(df_us_treat)/n_treat_us) + (var(df_us_ctrl)/n_ctrl_us))
+
+#Print
+cat("IsUK difference in mean:", percent(uk_diff_mean,accuracy = 0.001),"standard diviation",percent(sd_uk,accuracy = 0.001),"\n")
+cat("IsUS difference in mean:", percent(us_diff_mean,accuracy = 0.001),"standard diviation",percent(sd_us,accuracy = 0.001),"\n")
+```
+
+The difference in means for "IsUK" variable is 0.017%, with a standard deviation of 0.044%. This indicates that the treatment group had a slightly higher proportion of UK consumers than control group. While, the difference in means for the "IsUS" variable is -0.019%, with a standard deviation of 0.05%, indicating that the control group had a slightly higher proportion of US consumers than the treatment group.
+
+ii\. The validity of the randomization in terms of user location
+
+```{r}
+#t-test
+t.test(df$IsUK[df$treatment == 1], df$IsUK[df$treatment == 0])
+t.test(df$IsUS[df$treatment == 1], df$IsUS[df$treatment == 0])
+```
+
+The 95% confidence interval for the difference in means of 'IsUK' is (-0.000699, 0.001034), which includes zero. Similarly, the 95% confidence interval for the difference in means of 'IsUS' is (-0.001172, 0.000788), which also includes zero. Both results suggest that the difference is not statistically significant, indicting that we failed to reject the null hypothesis that there is no difference in the proportions of UK and US consumers between the treatment and control groups.
+
+### b. Verify the randomization by "past sales"
+
+#### i. Use the difference-in-means estimator to compare the average sales in the 2 weeks before the experiment in the Treatment versus Control groups.
+
+```{r}
+# Difference in means
+past_sales_diff_mean <- mean(df$past_sales[df$treatment == 1]) - mean(df$past_sales[df$treatment == 0])
+
+# Standard error
+sd_past_sales_diff <- sqrt(var(df$past_sales[df$treatment == 1])/sum(df$treatment == 1) + var(df$past_sales[df$treatment == 0])/sum(df$treatment == 0))
+
+# 95% confidence interval
+past_sales_diff_ci <- past_sales_diff_mean + c(-1, 1) * qt(0.025, sum(df$treatment == 1) + sum(df$treatment == 0) - 2) * sd_past_sales_diff
+
+# Print
+cat("Difference in means :", round(past_sales_diff_mean, 3),"$\n")
+cat("Standard error:", round(sd_past_sales_diff, 3),"$\n")
+cat("95% confidence interval:", round(past_sales_diff_ci, 3),"\n")
+```
+
+The result shows that difference in means for "past_sales" is 0.004\$, with a standard deviation of 0.005\$, suggesting that treatment group had more sales in the 2 weeks before the experiment compared to the control. The 95% confidence interval is (0.013, -0.006).
+
+#### ii. The validity of the randomization in terms of past sales
+
+```{r}
+t.test(df$past_sales[df$treatment == 1], df$past_sales[df$treatment == 0])
+```
+
+The 95% confidence interval for the difference in means of the past sales variable is -0.0061 to 0.0133, we can see that it includes zero. Therefore, we failed to reject the null hypothesis that there is no difference in mean past sales between the treatment and control groups at the 5% level.
+
+## 2. Ad effect on per-user sales if the experiment did not have ghost ads? (ITT)
+
+```{r}
+# ITT estimate
+ITT <- mean(df$sales[df$treatment == 1]) - mean(df$sales[df$treatment == 0])
+
+# Lift
+ITT_lift <- (mean(df$sales[df$treatment == 1]) - mean(df$sales[df$treatment == 0])) / mean(df$sales[df$treatment == 0])
+
+# sd
+se <- sqrt(var(df$sales[df$treatment == 1])/sum(df$treatment == 1) + var(df$sales[df$treatment == 0])/sum(df$treatment == 0))
+
+# 95% confidence interval
+ci <- ITT + c(-1, 1) * qt(0.025, sum(df$treatment == 1) + sum(df$treatment == 0) - 2) * se
+
+# Print the results
+cat("ITT estimate of ad effect on sales:", round(ITT,3), "$\n")
+cat("ITT Lift:", percent(ITT_lift, accuracy=0.001), "\n")
+cat("Standard error:", round(se,3), "$\n")
+cat("95% confidence interval:", round(ci, 3), "\n")
+```
+
+Under the assumption of no ghost ads effect, the ITT estimate of the ad effect on per-user sales is 0.373\$, with a standard deviation of 0.008\$ and ITT Lift is 42.445%, which means that the ad had a positive impact. The 95% confidence interval for the ITT estimate is (0.389, 0.356), which means that it is statistically significant.
+
+## 3. This experiment used ghost ads. Verify if the ghost ads were deployed the same way as the retailer ads by comparing the exposed users between the Treatment and Control groups.
+
+### a. Verify the equivalence of Treatment exposed and Control exposed users by user location.
+
+```{r}
+#Filter exposed users
+df_exposed <-df[df$saw_ads==1]
+
+#Create UK/US variables and df
+df_exposed_uk_treat <- df_exposed$IsUK[df_exposed$treatment == 1]
+df_exposed_uk_ctrl <- df_exposed$IsUK[df_exposed$treatment == 0]
+df_exposed_us_treat <- df_exposed$IsUS[df_exposed$treatment == 1]
+df_exposed_us_ctrl <- df_exposed$IsUS[df_exposed$treatment == 0]
+n_treat_exposed_uk <- length(df_exposed_uk_treat)
+n_ctrl_exposed_uk <- length(df_exposed_uk_ctrl)
+n_treat_exposed_us <- length(df_exposed_us_treat)
+n_ctrl_exposed_us <- length(df_exposed_us_ctrl)
+
+#Difference in means in isUK
+exposed_uk_diff_mean <-mean(df_exposed$IsUK[df_exposed$treatment==1])-mean(df_exposed$IsUK[df_exposed$treatment==0])
+sd_exposed_uk <- sqrt((var(df_exposed_uk_treat)/n_treat_exposed_uk) + (var(df_exposed_uk_ctrl)/n_ctrl_exposed_uk))
+
+#Difference in means in isUS
+exposed_us_diff_mean <-mean(df_exposed$IsUS[df_exposed$treatment==1])-mean(df_exposed$IsUS[df_exposed$treatment==0])
+sd_exposed_us <- sqrt((var(df_exposed_us_treat)/n_treat_exposed_us) + (var(df_exposed_us_ctrl)/n_ctrl_exposed_us))
+
+#Print
+cat("IsUK difference in mean:", percent(exposed_uk_diff_mean,accuracy = 0.001),"standard diviation",percent(sd_exposed_uk,accuracy=0.001),"\n")
+cat("IsUS difference in mean:", percent(exposed_us_diff_mean,accuracy = 0.001),"standard diviation",percent(sd_exposed_us,accuracy = 0.001),"\n")
+```
+
+```{r}
+#t-test
+t.test(df_exposed$IsUK[df_exposed$treatment == 1], df_exposed$IsUK[df_exposed$treatment == 0])
+t.test(df_exposed$IsUS[df_exposed$treatment == 1], df_exposed$IsUS[df_exposed$treatment == 0])
+```
+
+The difference in mean for UK exposed users is 0.368% with standard deviation of 0.058%, and for US exposed users, it is 0.771% with standard deviation of 0.066%. Both indicate that users who saw the ads were slightly more likely to be from the UK and US compared to those in the control group. The t-test results also provide the statistical significance of these differences, with the 95% confidence interval for "IsUK" is between (0.00254, 0.00482) and for "IsUS" is between (0.00642,0.00900), suggesting that the difference in means between the treatment and control groups is statistically significant in both the UK and the US.
+
+The results for all users(no ghost ad) indicate that there is no statistically significant difference between the treatment and control groups in the proportion of UK and US consumers. However, the results for exposed users show a statistically significant difference in the proportion of UK and US consumers.
+
+### b. Verify the equivalence of Treatment exposed and Control exposed users by past sales
+
+```{r}
+# Difference in means in "past_sales"
+past_sales_diff_mean_exposed <- mean(df_exposed$past_sales[df_exposed$treatment == 1]) - mean(df_exposed$past_sales[df_exposed$treatment == 0])
+
+# Standard error
+sd_past_sales_exposed <- sqrt(var(df_exposed$past_sales[df_exposed$treatment == 1])/sum(df_exposed$treatment == 1) + var(df_exposed$past_sales[df_exposed$treatment == 0])/sum(df_exposed$treatment == 0))
+
+# 95% confidence interval
+past_sales_diff_ci_exposed <- past_sales_diff_mean_exposed + c(-1, 1) * qt(0.025, sum(df_exposed$treatment == 1) + sum(df_exposed$treatment == 0) - 2) * sd_past_sales_exposed
+
+# Print
+cat("Difference in means :", round(past_sales_diff_mean_exposed, 3),"$\n")
+cat("Standard error:", round(sd_past_sales_exposed, 3),"$\n")
+cat("95% confidence interval:", round(past_sales_diff_ci_exposed, 3),"\n")
+```
+
+```{r}
+t.test(df_exposed$past_sales[df_exposed$treatment == 1], df_exposed$past_sales[df_exposed$treatment == 0])
+```
+
+The result suggests that there is no significant difference between the past sales for exposed users in the treatment and control group. The difference in means is \$-0.001 with standard deviation of \$0.007, which indicates that the average past sales of the treatment exposed group is slightly lower than that of the control. The 95% confidence interval of (0.012, -0.013) indicates that we failed to reject the null hypothesis that there is no significant difference in the past sales of treatment exposed and control exposed users.
+
+Regardless of whether users were exposed to ads or not, the finding suggests that there is no statistically significant difference in past sales between the treatment and control groups. This result is consistent across both the full user population and the subset of users who saw ads.
+
+## 4. The effect of using ghost ads. Compute the Treatment on Treated (TOT) estimate for users who saw ads.
+
+```{r}
+# calculate TOT 
+tot_estimate <- mean(df$sales[df$treatment == 1 & df$saw_ads == 1]) - mean(df$sales[df$treatment == 0 & df$saw_ads == 1])
+
+#lift TOT
+tot_lift <- (mean(df$sales[df$treatment == 1 & df$saw_ads == 1]) - mean(df$sales[df$treatment == 0 & df$saw_ads == 1]))/mean(df$sales[df$treatment == 0 & df$saw_ads == 1])
+
+# calculate standard error
+se_tot <- sqrt(var(df$sales[df$treatment == 1 & df$saw_ads == 1])/sum(df$treatment == 1 & df$saw_ads == 1) + var(df$sales[df$treatment == 0 & df$saw_ads == 1])/sum(df$treatment == 0 & df$saw_ads == 1))
+
+# calculate 95% confidence interval
+lower_ci_tot <- tot_lift - 1.96 * se_tot
+upper_ci_tot <- tot_lift + 1.96 * se_tot
+
+# print results
+cat("Point estimate: ", round(tot_estimate, 3), "$\n")
+cat("TOT Lift:", percent(tot_lift, accuracy=0.001), "\n")
+cat("Standard error: ", round(se_tot, 3), "$\n")
+cat("95% Confidence interval: ", round(lower_ci_tot, 3), ", ", round(upper_ci_tot, 3), "\n")
+```
+
+The sales effect point estimate for the TOT is \$0.656 and the lift is 73.642%, which means that users who were targeted with ads had sales that were 0.656\$ higher(with standard error is 0.0118) than users who were not targeted with ads. The 95% confidence interval is (0.633 , 0.679), suggesting that the effect in sales associated with being exposed to ads is statistically significant.
+
+```{r}
+#compare only within treatment group effect
+observation_ITT <- mean(df$sales[df$saw_ads == 1 & df$treatment == 1]) - 
+  mean(df$sales[df$saw_ads == 0 & df$treatment == 1])
+observation_lift <- observation_ITT/mean(df$sales[df$saw_ads == 0 & df$treatment == 1])
+t.test(df$sales[df$saw_ads == 1 & df$treatment == 1], 
+       df$sales[df$saw_ads == 0 & df$treatment == 1])
+observation_sd <- sqrt(var(df$sales[df$saw_ads == 1 & df$treatment == 1]) / 
+                 sum(df$saw_ads == 1 & df$treatment == 1) + 
+                 var(df$sales[df$saw_ads == 0 & df$treatment == 1]) / 
+                 sum(df$saw_ads == 0 & df$treatment == 1))
+
+cat("Observational estimated effect is:", round(observation_ITT, 3), "\n")
+cat("Lift of effect is:", percent(observation_lift,accuracy=0.001), "\n")
+cat("SD of effect is:", round(observation_sd, 3), "\n")
+```
+
+## 5. **What is the effect of the ad campaign on total sales (i.e. gross revenue)?**
+
+```{r}
+#ITT of Sales(t) - Sales(c)
+ITT <- mean(df$sales[df$treatment == 1]) -
+mean(df$sales[df$treatment == 0]) #per-user level
+incremental_rev <- ITT*sum(df$treatment == 1)
+treat_rev <- sum(df$sales[df$treatment == 1])
+control_rev <- sum(df$sales[df$treatment == 0])
+ITT_Lift <- (treat_rev - control_rev)/control_rev
+#S.E.
+sd_ITT <- sqrt(var(df$sales[df$treatment == 1]) /
+sum(df$treatment == 1) +
+var(df$sales[df$treatment == 0]) /
+sum(df$treatment == 0))
+#t.test statistics
+t.test(df$sales[df$treatment == 1],
+df$sales[df$treatment == 0])
+```
+
+### a. **Compute the effect using the ITT estimate**
+
+```{r}
+t.test(df$past_sales[df$treatment == 1],
+df$past_sales[df$treatment == 0])
+```
+
+```{r}
+cat("ITT of incremental gross revenue is:", round(incremental_rev, 3), "\n")
+cat("ITT Lift on total sales is:", percent(ITT_Lift, accuarcy=0.001), "\n")
+```
+
+The point estimate of ITT on total incremental gross revenue is \$894,339 (with standard deviation of 0.008), representing the extra gross revenue the treatment group generated compared to the control group. The lift of ITT on gross revenue is 1.138%. The 95% CI is (0.356, 0.389), meaning the lift of ITT on total gross revenue is statistically significant.
+
+### **b. Compute the effect using the TOT estimate**
+
+```{r}
+#TOT of ad campaign on incremental revenue
+TOT <- mean(df$sales[df$treatment == 1 & df$saw_ads == 1]) -
+mean(df$sales[df$treatment == 0 & df$saw_ads == 1])
+incremental_rev <- TOT*sum(df$treatment == 1 & df$saw_ads == 1)
+treat_rev <- sum(df$sales[df$treatment == 1 & df$saw_ads == 1])
+control_rev <- sum(df$sales[df$treatment == 0 & df$saw_ads == 1])
+TOT_Lift <- (treat_rev - control_rev)/control_rev
+#SD
+sd_TOT <- sqrt(var(df$sales[df$treatment == 1 & df$saw_ads == 1]) /
+sum(df$treatment == 1 & df$saw_ads == 1) +
+var(df$sales[df$treatment == 0 & df$saw_ads == 1]) /
+sum(df$treatment == 0 & df$saw_ads == 1))
+#t.test statistics
+t.test(df$sales[df$treatment == 1 & df$saw_ads == 1],
+df$sales[df$treatment == 0 & df$saw_ads == 1])
+```
+
+```{r}
+t.test(df$past_sales[df$treatment == 1 & df$saw_ads == 1],
+df$sapast_salesles[df$treatment == 0 & df$saw_ads == 1])
+```
+
+```{r}
+cat("TOT of incremental gross revenue is:",round(incremental_rev, 3), "\n")
+cat("TOT Lift is:", percent(TOT_Lift, accuarcy=0.001), "\n")
+cat("S.E. of TOT is:", round(sd_TOT, 3))
+```
+
+After conditioning on both seeing ads, the treatment group generated \$872,379 (with standard deviation of 0.012) more gross revenue on average compared to the control group. The lift of TOT is 1.428%, and the 95% CI is (0.633, 0.679), suggesting the lift of TOT on gross revenue is statistically significant.
+
+### **c. Based on your analysis in Question 3, which of the two estimates should you report from this experiment? Why?**
+
+After conducting a pre-experiment randomization check on past sales, it turns out that only ITT yields a valid result (p-value = 0.5, fail to reject the null), meaning that treatment and control have similar past sales patterns. TOT yields a very small p-value that allows us to conclude that the randomization is not properly done (i.e., there is a significant difference in past sales before running the experiment), prohibiting us from using TOT as the ideal estimate. Since ITT is the only valid measure based on t.test, we should report ad's ITT of \$894339 and a lift of 1.14% to the manager, recommending the effectiveness of the ad campaign due to statistical significance.
+
+### **d. Using your preferred estimator, summarize your results for a manager. What are the managerial and statistical implications of your results?**
+
+On average, the ITT of the ad campaign on total incremental gross revenue is \$894339, meaning the treatment group in total generated much more gross sales compared to the control group. The lift of ITT on gross revenue is 1.14%, suggesting that the treatment group has 1.14% more gross revenue than the control group. Although we can't measure the ROI of the campaign, these statistics tell us that the ad is effective and generates statistically significant results.
+
+## 6. **Observational experiment**
+
+```{r}
+#compare only within treatment group effect
+observation_ITT <- mean(df$sales[df$saw_ads == 1 & df$treatment == 1]) -
+mean(df$sales[df$saw_ads == 0 & df$treatment == 1])
+observation_lift <- observation_ITT /
+mean(df$sales[df$saw_ads == 0 & df$treatment == 1])
+t.test(df$sales[df$saw_ads == 1 & df$treatment == 1],
+df$sales[df$saw_ads == 0 & df$treatment == 1])
+```
+
+### a. **Compute the effect using the ITT estimate**
+
+```{r}
+observation_sd <- sqrt(var(df$sales[df$saw_ads == 1 & df$treatment == 1]) /
+sum(df$saw_ads == 1 & df$treatment == 1) +
+var(df$sales[df$saw_ads == 0 & df$treatment == 1]) /
+sum(df$saw_ads == 0 & df$treatment == 1))
+cat("Observational estimated effect is:", round(observation_ITT, 3), "\n")
+cat("Lift of effect is:", percent(observation_lift, accuarcy=0.001), "\n")
+cat("SD of effect is:", round(observation_sd, 3), "\n")
+```
+
+Point estimate of ad's ITT per non-UK customer is 0.507, with a standard deviation of 0.02 and lift of 0.419%. The p-value and 95% CI (0.468, 0.546) suggest the ad's TOT to be significant, so the ad campaign has a meaningful impact on a per-user basis in the UK.
+
+## 7. Market segment suggestions
+
+```{r}
+others_ITT <- mean(df$sales[df$treatment == 1 & df$IsUK != 1 ]) -
+mean(df$sales[df$treatment == 0 & df$IsUK != 1 ])
+others_ITT_lift <- others_ITT/mean(df$sales[df$treatment == 0 & df$IsUK != 1 ])
+t.test(df$sales[df$treatment == 1 & df$IsUK != 1 ],
+df$sales[df$treatment == 0 & df$IsUK != 1 ])
+```
+
+```{r}
+sd_others_ITT <- sqrt(var(df$sales[df$treatment == 1 & df$IsUK != 1 ]) /
+sum(df$treatment == 1 & df$IsUK != 1 ) +
+var(df$sales[df$treatment == 0 & df$IsUK != 1 ]) /
+sum(df$treatment == 0 & df$IsUK != 1 ))
+cat("ITT per non-UK customer is:", round(others_ITT, 3), "\n")
+cat("Lift of ITT per non-UK customer is:", percent(others_ITT_lift, accuarcy=0.001), "\n")
+cat("SD of non-UK ITT is:", round(sd_others_ITT, 3), "\n")
+```
+
+Point estimate of ad's ITT per non-UK customer is 0.327, with a standard deviation of 0.009 and lift of 1.16%. The p-value and 95% CI (0.310, 0.345) suggest the ad's ITT to be significant, so the ad campaign has a meaningful impact on a per-user basis in non-UK. Although the ITT for non-UK users is smaller than UK users, the lift is higher (1.16% vs. 0.419%), meaning that users' sales response is more pronounced outside of the UK.
+
+### **c. Summarize the managerial and statistical implications of your results for a manager who needs to decide how to allocate the ad budget across locations. How will you recommend allocating the budget?**
+
+I would recommend targeting more non-UK users during future ads campaigns due to its higher lift and more precise confidence intervals. Although non-UK user's ITT is \$0.327 compared to \$0.507 for UK users, there are much more non-UK observations (2,999,450 vs. 1,000,696) and a higher lift on ad campaigns can be converted to more sales as the ad reaches more users.
